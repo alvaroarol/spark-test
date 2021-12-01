@@ -1,13 +1,15 @@
 package com.ses.spark;
 
 import org.apache.spark.sql.SparkSession;
+import org.apache.spark.sql.expressions.Window;
 import org.apache.spark.sql.Column;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
 import static org.apache.spark.sql.functions.from_json;
 import static org.apache.spark.sql.functions.explode;
 import static org.apache.spark.sql.functions.col;
-import static org.apache.spark.sql.functions.window;
+import static org.apache.spark.sql.functions.avg;
+import static org.apache.spark.sql.functions.sum;
 import org.apache.spark.sql.types.ArrayType;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.Metadata;
@@ -25,7 +27,7 @@ public class SparkOnKafkaTest {
 			new StructField[] {
 				new StructField("id", DataTypes.StringType, false, Metadata.empty()),
 				new StructField("timeStamp", DataTypes.TimestampType, false, Metadata.empty()),
-				new StructField("valueToAverage", DataTypes.FloatType, false, Metadata.empty())
+				new StructField("points", DataTypes.FloatType, false, Metadata.empty())
 			}
 		);
 		ArrayType arrSchema = new ArrayType(schema, false);
@@ -55,11 +57,18 @@ public class SparkOnKafkaTest {
 		Dataset<Row> records = jsonData.select(explodedCols).select("col.*");
 		records.printSchema();
 		
-		// Average 'valueToAverage' per ID
-		Dataset<Row> averageRecords = records.groupBy("id").avg("valueToAverage");
-
+		// Processing columns
+		Dataset<Row> processedRecords = records
+			.groupBy("id")
+			.agg(
+				avg("points").as("averagePoints"),
+				sum("points").as("totalPoints")
+			)
+			.drop("timeStamp")
+			.drop("points");
+		
 		// Write back to kafka (only value, no key)
-		averageRecords.selectExpr("to_json(struct(*)) AS value")
+		processedRecords.selectExpr("to_json(struct(*)) AS value")
 			.writeStream()
 			.format("kafka")
 			.outputMode("update") // Don't send all the averages for all IDs, only the ones with an updated average
